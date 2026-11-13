@@ -3,15 +3,16 @@ package ar.jornadas.ui
 import android.app.Application
 import androidx.lifecycle.*
 import ar.jornadas.Servicios
+import ar.jornadas.data.ProgramaGuardado
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import java.io.IOException
 
 class ProgramaModel(app: Application) : AndroidViewModel(app) {
     private val servicios = Servicios(app)
     val mesa = servicios.mesa
     private val repo = servicios.agenda
-    val charlas = repo.programa.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val programa = repo.programa.stateIn<ProgramaGuardado?>(viewModelScope, SharingStarted.Eagerly, null)
     val dia = MutableStateFlow(0)
     val aviso = MutableStateFlow("")
     val cargando = MutableStateFlow(false)
@@ -22,7 +23,8 @@ class ProgramaModel(app: Application) : AndroidViewModel(app) {
             aviso.value = ""
             try {
                 repo.sincronizar()
-            } catch (e: IOException) {
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 aviso.value = "No se pudo consultar el programa"
             } finally {
                 cargando.value = false

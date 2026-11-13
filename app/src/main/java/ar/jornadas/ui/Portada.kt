@@ -9,6 +9,9 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -16,7 +19,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 fun Portada(model: ProgramaModel) {
     var seccion by rememberSaveable { mutableStateOf("Programa") }
     var detalle by rememberSaveable { mutableStateOf<String?>(null) }
-    val charlas by model.charlas.collectAsStateWithLifecycle()
+    val programa by model.programa.collectAsStateWithLifecycle()
+    val charlas = programa?.charlas.orEmpty()
+    val aviso by model.aviso.collectAsStateWithLifecycle()
+    val cargando by model.cargando.collectAsStateWithLifecycle()
     BackHandler(detalle != null || seccion != "Programa") {
         if (detalle != null) detalle = null else seccion = "Programa"
     }
@@ -33,8 +39,19 @@ fun Portada(model: ProgramaModel) {
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Spacer(Modifier.height(8.dp))
                 Text("Jornadas del Sur", style = MaterialTheme.typography.labelLarge)
+                if (detalle != null || seccion != "Mesa") {
+                    if (cargando || programa == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (aviso.isNotEmpty() && programa != null) {
+                        Text(if (programa?.valido == true) "$aviso. Se están usando datos guardados." else aviso,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                        OutlinedButton(onClick = model::recargar) { Text("Reintentar") }
+                    }
+                }
                 if (detalle != null) {
                     TextButton(onClick = { detalle = null }) { Text("Volver") }
+                    if (programa != null && programa?.valido == true && charlas.isEmpty()) {
+                        Text("Sin charlas programadas")
+                    }
                     val ficha = charlas.find { it.id == detalle }
                     if (ficha != null) Column(Modifier.verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -52,7 +69,7 @@ fun Portada(model: ProgramaModel) {
                         "Programa" -> Catalogo(model) { detalle = it }
                         "Mi agenda" -> {
                             val guardadas = charlas.filter { it.favorita }
-                            if (guardadas.isEmpty()) Text("Todavía no agregaste charlas.")
+                            if (programa != null && guardadas.isEmpty()) Text("Todavía no agregaste charlas.")
                             Grilla(guardadas) { detalle = it }
                         }
                         else -> Mesa(model.mesa)
