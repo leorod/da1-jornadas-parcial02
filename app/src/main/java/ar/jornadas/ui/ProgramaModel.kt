@@ -8,14 +8,18 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-class ProgramaModel(app: Application) : AndroidViewModel(app) {
+class ProgramaModel(app: Application, private val estado: SavedStateHandle) : AndroidViewModel(app) {
     private val servicios = Servicios(app)
     val mesa = servicios.mesa
     private val repo = servicios.agenda
     val programa = repo.programa.stateIn<ProgramaGuardado?>(viewModelScope, SharingStarted.Eagerly, null)
-    val dia = MutableStateFlow(0)
+    val dia = estado.getStateFlow("dia", 0)
+    val tema = estado.getStateFlow("tema", "Todos")
     val aviso = MutableStateFlow("")
     val cargando = MutableStateFlow(false)
+
+    fun seleccionarDia(dia: Int) { estado["dia"] = dia }
+    fun seleccionarTema(tema: String) { estado["tema"] = tema }
 
     fun recargar() {
         viewModelScope.launch {
