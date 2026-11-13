@@ -4,8 +4,10 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
@@ -93,6 +95,97 @@ class AgendaRepositoryTest {
         assertEquals(ProgramaGuardado(emptyList(), true), offline.programa.first())
         falla { offline.sincronizar() }
         assertEquals(ProgramaGuardado(emptyList(), true), offline.programa.first())
+    }
+
+    @Test
+    fun updatedTalkPreservesFavoriteByIdAndReplacesDetails() = runBlocking(Dispatchers.IO) {
+        val db = abrir()
+        val repository = repo(db) { listOf(ficha) }
+        repository.sincronizar()
+        repository.cambiarFavorita("11")
+
+        repo(db) { listOf(ficha.copy(title = "Compose en produccion avanzada", room = "Sala Puerto")) }
+            .sincronizar()
+
+        assertEquals(ProgramaGuardado(listOf(Charla("11", "Compose en produccion avanzada", "Android", 1,
+            "09:00", "Sala Puerto", "Ana", "Resumen", true)), true), repository.programa.first())
+    }
+
+    @Test
+    fun nonemptySnapshotRemovesMissingTalksAndPreservesSurvivingFavorites() = runBlocking(Dispatchers.IO) {
+        val db = abrir()
+        val vigente = ficha.copy(id = "23")
+        val repository = repo(db) { listOf(ficha, vigente) }
+        repository.sincronizar()
+        repository.cambiarFavorita("11")
+        repository.cambiarFavorita("23")
+
+        repo(db) { listOf(vigente, ficha.copy(id = "90")) }.sincronizar()
+
+        val programa = repository.programa.first()
+        assertTrue(programa.valido)
+        assertEquals(setOf("23", "90"), programa.charlas.map { it.id }.toSet())
+        assertEquals(listOf("23"), programa.charlas.filter { it.favorita }.map { it.id })
+    }
+
+    @Test
+    fun removedTalkReturnsWithoutFavorite() = runBlocking(Dispatchers.IO) {
+        val db = abrir()
+        val repository = repo(db) { listOf(ficha) }
+        repository.sincronizar()
+        repository.cambiarFavorita("11")
+        repo(db) { listOf(ficha.copy(id = "90")) }.sincronizar()
+
+        repository.sincronizar()
+
+        assertEquals(listOf("11"), repository.programa.first().charlas.map { it.id })
+        assertFalse(repository.programa.first().charlas.single().favorita)
+    }
+
+    @Test
+    fun favoriteAddedOrRemovedWhileNetworkIsPendingIsRespected() = runBlocking(Dispatchers.IO) {
+        for (marcada in listOf(false, true)) {
+            val db = abrir()
+            val repository = repo(db) { listOf(ficha) }
+            repository.sincronizar()
+            if (marcada) repository.cambiarFavorita("11")
+            val iniciada = CompletableDeferred<Unit>()
+            val respuesta = CompletableDeferred<List<FichaRemota>>()
+            val pendiente = repo(db) {
+                iniciada.complete(Unit)
+                respuesta.await()
+            }
+            val descarga = launch { pendiente.sincronizar() }
+
+            iniciada.await()
+            repository.cambiarFavorita("11")
+            assertEquals(!marcada, repository.programa.first().charlas.single().favorita)
+            respuesta.complete(listOf(ficha.copy(room = "Sala Puerto")))
+            descarga.join()
+
+            val charla = repository.programa.first().charlas.single()
+            assertEquals(!marcada, charla.favorita)
+            assertEquals("Sala Puerto", charla.sala)
+        }
+    }
+
+    @Test
+    fun validityWriteFailureRollsBackNonemptySnapshotAndPreservesFavorites() = runBlocking(Dispatchers.IO) {
+        val db = abrir()
+        val repository = repo(db) { listOf(ficha) }
+        repository.sincronizar()
+        repository.cambiarFavorita("11")
+        val anterior = repository.programa.first()
+        db.openHelper.writableDatabase.execSQL("""CREATE TRIGGER fail_validity BEFORE INSERT ON edicion_guardada
+            BEGIN SELECT RAISE(ABORT, 'test failure'); END""")
+
+        try {
+            repo(db) { listOf(ficha.copy(id = "90")) }.sincronizar()
+            fail("Expected failed validity write")
+        } catch (_: android.database.sqlite.SQLiteException) {
+            // A failed replacement must restore the previous talks, favorites and validity.
+        }
+        assertEquals(anterior, repository.programa.first())
     }
 
     private fun crearVersion1(nombre: String, conCharla: Boolean) {

@@ -41,9 +41,14 @@ interface CarteleraDao {
     @Query("DELETE FROM charlas")
     suspend fun vaciar()
 
+    @Query("SELECT id FROM charlas WHERE favorita = 1")
+    suspend fun favoritas(): List<String>
+
     @Transaction
     suspend fun guardarEdicion(fichas: List<Charla>) {
-        if (fichas.isEmpty()) vaciar() else guardar(fichas)
+        val favoritas = favoritas().toSet()
+        vaciar()
+        guardar(fichas.map { it.copy(favorita = it.id in favoritas) })
         guardarValidez(EdicionGuardada())
     }
 
